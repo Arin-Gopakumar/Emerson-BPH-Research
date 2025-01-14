@@ -1,0 +1,40 @@
+Scan Info.,Pre-UDS,Post-UDS
+Patient No.,1152,
+Qmax: Maximum flow rate (mL/s),2.3,2.9
+Pdet-max: Maximum detrusor pressure (cmH2O),30,37
+PdetQmax: Detrusor pressure at maximum flow rate (cmH2O),19,32
+VH2O-cap: Bladder capacity (mL),340,595
+Detrusor Contractility,Poor,Poor
+Infusion Rate,Constant Infusion,Variable Infusion
+,,
+Patient No.,1017,
+Qmax: Maximum flow rate (mL/s),6.3,12
+Pdet-max: Maximum detrusor pressure (cmH2O),130,110
+PdetQmax: Detrusor pressure at maximum flow rate (cmH2O),98,37
+VH2O-cap: Bladder capacity (mL),217,310
+Detrusor Contractility,Poor,Poor
+Infusion Rate,Constant Infusion,Constant Infusion
+,,
+Patient No.,1000,
+Qmax: Maximum flow rate (mL/s),4.4,8.2
+Pdet-max: Maximum detrusor pressure (cmH2O),184,59
+PdetQmax: Detrusor pressure at maximum flow rate (cmH2O),100,0
+VH2O-cap: Bladder capacity (mL),367.4,140
+Detrusor Contractility,Poor,Poor
+Infusion Rate,Constant Infusion,Variable Infusion
+,,
+Patient No.,577,
+Qmax: Maximum flow rate (mL/s),10.4,16.5
+Pdet-max: Maximum detrusor pressure (cmH2O),46.9,70
+PdetQmax: Detrusor pressure at maximum flow rate (cmH2O),36.4,55.2
+VH2O-cap: Bladder capacity (mL),120,#1 = 206.8 \\ #2 = 62.1
+Detrusor Contractility,Poor,
+Infusion Rate,Variable Infusion,Variable Infusion
+,,
+Patient No.,1054,
+Qmax: Maximum flow rate (mL/s),11.1,6.6
+Pdet-max: Maximum detrusor pressure (cmH2O),51.1,75.7
+PdetQmax: Detrusor pressure at maximum flow rate (cmH2O),45,56.2
+VH2O-cap: Bladder capacity (mL),525,200.6
+Detrusor Contractility,Poor,Poor
+Infusion Rate,Variable Infusion,Constant Infusion
