@@ -2,15 +2,14 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import classification_report
+from sklearn.metrics import classification_report, confusion_matrix, roc_curve, auc
 from scipy import stats
 
+# Step 1: Enhanced Data Loading and Processing
 def load_and_process_data(file_name):
-    # Previous load_and_process_data function remains the same
-    # [Previous implementation remains unchanged]
     raw_data = pd.read_csv(file_name, header=None)
     patients = []
     current_patient = {}
@@ -29,7 +28,9 @@ def load_and_process_data(file_name):
                 patients.append(current_patient)
             current_patient = {"Patient_No": pre}
         elif key is not None:
+            # Extract the base metric name
             if isinstance(key, str):
+                # Remove everything up to the colon and clean up the remaining text
                 base_metric = key.split(':')[0].strip() if ':' in key else key.strip()
                 base_metric = (base_metric.replace("Pre-", "")
                                        .replace("Post-", "")
@@ -38,6 +39,7 @@ def load_and_process_data(file_name):
                                        .replace(")", "")
                                        .replace("/", "_per_"))
                 
+                # Handle special case for maximum flow rate
                 if "Maximum_flow_rate" in base_metric:
                     base_metric = "Qmax"
                 elif "Maximum_detrusor_pressure" in base_metric:
@@ -46,16 +48,14 @@ def load_and_process_data(file_name):
                     base_metric = "PdetQmax"
                 elif "Bladder_capacity" in base_metric:
                     base_metric = "VH2O_cap"
-                elif "Detrusor_Contractility" in base_metric:
-                    base_metric = "Contractility"
-                elif "Infusion_Rate" in base_metric:
-                    base_metric = "Infusion_Rate"
                 
+                # Handle multiple measurements in VH2O-cap
                 if isinstance(pre, str) and "#1" in pre:
                     pre = float(pre.split("#1 = ")[1].split("\\")[0])
                 if isinstance(post, str) and "#1" in post:
                     post = float(post.split("#1 = ")[1].split("\\")[0])
                 
+                # Store values with consistent naming
                 if pre is not None and str(pre).strip():
                     current_patient[f"Pre_{base_metric}"] = pre
                 if post is not None and str(post).strip():
@@ -66,166 +66,150 @@ def load_and_process_data(file_name):
     
     df = pd.DataFrame(patients)
     
+    # Convert numeric columns
     numeric_columns = [col for col in df.columns if any(metric in col for metric in ['Qmax', 'Pdet_max', 'PdetQmax', 'VH2O_cap'])]
     for col in numeric_columns:
         df[col] = pd.to_numeric(df[col], errors='coerce')
     
     return df
 
-def analyze_patient_outcomes(df):
-    """Generate patient-specific analysis and clinical interpretations."""
-    patient_analyses = []
-    
-    for _, patient in df.iterrows():
-        analysis = {
-            'Patient_No': patient['Patient_No'],
-            'findings': []
-        }
-        
-        # Analyze Qmax changes
-        if 'Pre_Qmax' in patient and 'Post_Qmax' in patient:
-            qmax_change = patient['Post_Qmax'] - patient['Pre_Qmax']
-            qmax_pct = (qmax_change / patient['Pre_Qmax'] * 100) if patient['Pre_Qmax'] != 0 else np.nan
-            
-            if qmax_change > 0:
-                if qmax_change > 5:
-                    analysis['findings'].append(f"Significant improvement in flow rate (↑{qmax_change:.1f} mL/s, {qmax_pct:.1f}%)")
-                else:
-                    analysis['findings'].append(f"Modest improvement in flow rate (↑{qmax_change:.1f} mL/s, {qmax_pct:.1f}%)")
-            else:
-                analysis['findings'].append(f"Decreased flow rate (↓{abs(qmax_change):.1f} mL/s, {qmax_pct:.1f}%)")
-        
-        # Analyze bladder capacity changes
-        if 'Pre_VH2O_cap' in patient and 'Post_VH2O_cap' in patient:
-            capacity_change = patient['Post_VH2O_cap'] - patient['Pre_VH2O_cap']
-            capacity_pct = (capacity_change / patient['Pre_VH2O_cap'] * 100) if patient['Pre_VH2O_cap'] != 0 else np.nan
-            
-            if abs(capacity_change) > 50:  # Significant change threshold
-                direction = "increased" if capacity_change > 0 else "decreased"
-                analysis['findings'].append(f"Bladder capacity {direction} by {abs(capacity_change):.1f} mL ({capacity_pct:.1f}%)")
-        
-        # Analyze detrusor pressure changes
-        if 'Pre_Pdet_max' in patient and 'Post_Pdet_max' in patient:
-            pdet_change = patient['Post_Pdet_max'] - patient['Pre_Pdet_max']
-            if abs(pdet_change) > 20:  # Significant change threshold
-                direction = "increased" if pdet_change > 0 else "decreased"
-                analysis['findings'].append(f"Maximum detrusor pressure {direction} by {abs(pdet_change):.1f} cmH2O")
-        
-        # Overall assessment
-        if 'Pre_Qmax' in patient and 'Post_Qmax' in patient:
-            if patient['Post_Qmax'] > 15:
-                analysis['outcome'] = "Good outcome - Normal flow achieved"
-            elif patient['Post_Qmax'] > patient['Pre_Qmax'] * 1.5:
-                analysis['outcome'] = "Moderate improvement - Significant increase in flow"
-            else:
-                analysis['outcome'] = "Limited improvement - Consider follow-up evaluation"
-        
-        patient_analyses.append(analysis)
-    
-    return patient_analyses
-
-def create_enhanced_visualizations(df, analysis_results):
-    """Create improved visualizations with better formatting and clarity."""
+# Step 2: Enhanced Data Analysis
+def analyze_uds_metrics(df):
     metrics = ['Qmax', 'Pdet_max', 'PdetQmax', 'VH2O_cap']
-    metric_labels = {
-        'Qmax': 'Maximum Flow Rate (mL/s)',
-        'Pdet_max': 'Maximum Detrusor Pressure (cmH2O)',
-        'PdetQmax': 'Detrusor Pressure at Qmax (cmH2O)',
-        'VH2O_cap': 'Bladder Capacity (mL)'
-    }
+    analysis_results = {}
     
-    # Set style for better visualization
-    plt.style.use('seaborn')
-    
-    # 1. Individual Patient Trajectories
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    axes = axes.ravel()
-    
-    for idx, metric in enumerate(metrics):
+    for metric in metrics:
         pre_col = f'Pre_{metric}'
         post_col = f'Post_{metric}'
         
         if pre_col in df.columns and post_col in df.columns:
-            ax = axes[idx]
+            # Calculate differences and percentage changes
+            df[f'{metric}_diff'] = df[post_col] - df[pre_col]
+            df[f'{metric}_pct_change'] = ((df[post_col] - df[pre_col]) / df[pre_col] * 100)
             
-            # Plot individual patient trajectories
-            for _, patient in df.iterrows():
-                ax.plot([1, 2], [patient[pre_col], patient[post_col]], 
-                       'gray', alpha=0.3, linewidth=1)
+            # Perform statistical analysis
+            valid_pairs = df[[pre_col, post_col]].dropna()
+            if len(valid_pairs) >= 2:  # Need at least 2 pairs for t-test
+                t_stat, p_value = stats.ttest_rel(valid_pairs[pre_col], 
+                                                valid_pairs[post_col])
+            else:
+                t_stat, p_value = np.nan, np.nan
             
-            # Plot mean values
-            mean_pre = df[pre_col].mean()
-            mean_post = df[post_col].mean()
-            ax.plot([1, 2], [mean_pre, mean_post], 'b-', linewidth=2, 
-                   label='Mean')
-            
-            # Add error bars for standard deviation
-            ax.errorbar([1, 2], 
-                       [mean_pre, mean_post],
-                       yerr=[df[pre_col].std(), df[post_col].std()],
-                       fmt='none', color='b', capsize=5)
-            
-            ax.set_xticks([1, 2])
-            ax.set_xticklabels(['Pre-treatment', 'Post-treatment'])
-            ax.set_title(f'{metric_labels[metric]}\np={analysis_results[metric]["p_value"]:.3f}')
-            ax.grid(True, alpha=0.3)
+            analysis_results[metric] = {
+                'mean_pre': df[pre_col].mean(),
+                'std_pre': df[pre_col].std(),
+                'mean_post': df[post_col].mean(),
+                'std_post': df[post_col].std(),
+                'mean_diff': df[f'{metric}_diff'].mean(),
+                'mean_pct_change': df[f'{metric}_pct_change'].mean(),
+                'p_value': p_value,
+                'n_samples': len(valid_pairs)
+            }
     
+    return df, analysis_results
+
+# Step 3: Enhanced Visualization
+def create_visualizations(df, analysis_results):
+    metrics = ['Qmax', 'Pdet_max', 'PdetQmax', 'VH2O_cap']
+    
+    # Print column names for debugging
+    print("\nAvailable columns in DataFrame:", df.columns.tolist())
+    
+    # Create boxplots for pre/post comparisons
+    plt.figure(figsize=(15, 10))
+    for i, metric in enumerate(metrics, 1):
+        pre_col = f'Pre_{metric}'
+        post_col = f'Post_{metric}'
+        
+        if pre_col in df.columns and post_col in df.columns:
+            plt.subplot(2, 2, i)
+            data_to_plot = [
+                df[pre_col].dropna(),
+                df[post_col].dropna()
+            ]
+            plt.boxplot(data_to_plot, labels=['Pre', 'Post'])
+            plt.title(f'{metric} Comparison\n' +
+                     f'n={analysis_results[metric]["n_samples"]}\n' +
+                     f'p={analysis_results[metric]["p_value"]:.3f}')
+            plt.ylabel('Value')
     plt.tight_layout()
     plt.show()
     
-    # 2. Correlation Matrix with Enhanced Formatting
+    # Create correlation heatmap for pre-treatment metrics
     pre_metrics = [f'Pre_{metric}' for metric in metrics if f'Pre_{metric}' in df.columns]
     if pre_metrics:
-        plt.figure(figsize=(10, 8))
         correlation_matrix = df[pre_metrics].corr()
         
-        mask = np.triu(np.ones_like(correlation_matrix), k=1)
-        sns.heatmap(correlation_matrix, 
-                   mask=mask,
-                   annot=True, 
-                   cmap='RdBu_r',
-                   center=0,
-                   vmin=-1, 
-                   vmax=1,
-                   fmt='.2f',
-                   square=True,
-                   cbar_kws={"shrink": .5})
-        
-        plt.title('Correlation between Pre-Treatment Metrics', pad=20)
-        plt.tight_layout()
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', center=0)
+        plt.title('Correlation between Pre-Treatment Metrics')
         plt.show()
 
-def generate_clinical_summary(df, analysis_results, patient_analyses):
-    """Generate a comprehensive clinical summary of the findings."""
-    summary = []
+# Step 4: Enhanced Machine Learning Model
+def build_predictive_model(df):
+    # Prepare features and target
+    metrics = ['Qmax', 'Pdet_max', 'PdetQmax', 'VH2O_cap']
+    features = [f'Pre_{metric}' for metric in metrics if f'Pre_{metric}' in df.columns]
     
-    # Overall cohort characteristics
-    summary.append("COHORT OVERVIEW:")
-    summary.append(f"Total patients analyzed: {len(df)}")
+    if not features:
+        print("Error: No valid feature columns found")
+        return None, None, None, None, None
     
-    # Treatment effectiveness
-    qmax_improved = df[df['Post_Qmax'] > df['Pre_Qmax']].shape[0]
-    summary.append(f"\nTREATMENT EFFECTIVENESS:")
-    summary.append(f"- {qmax_improved} out of {len(df)} patients ({qmax_improved/len(df)*100:.1f}%) showed improvement in maximum flow rate")
+    # Create multiple target variables for different success criteria
+    if 'Qmax_pct_change' in df.columns and 'VH2O_cap_pct_change' in df.columns:
+        df['Qmax_significant_improvement'] = (df['Qmax_pct_change'] > 20).astype(int)
+        df['Overall_improvement'] = ((df['Qmax_pct_change'] > 20) & 
+                                   (df['VH2O_cap_pct_change'] > 10)).astype(int)
+    else:
+        print("Error: Required percentage change columns not found")
+        return None, None, None, None, None
     
-    # Key findings
-    summary.append("\nKEY FINDINGS:")
-    for metric, results in analysis_results.items():
-        if results['mean_diff'] != 0:
-            direction = "increase" if results['mean_diff'] > 0 else "decrease"
-            sig_level = "Significant" if results['p_value'] < 0.05 else "Non-significant"
-            summary.append(f"- {sig_level} {direction} in {metric}: {abs(results['mean_diff']):.1f} units (p={results['p_value']:.3f})")
+    # Prepare the data
+    X = df[features].copy()
+    y = df['Overall_improvement']
     
-    # Patient-specific notable outcomes
-    summary.append("\nNOTABLE PATIENT OUTCOMES:")
-    for analysis in patient_analyses:
-        if len(analysis['findings']) > 0:
-            summary.append(f"\nPatient {analysis['Patient_No']}:")
-            for finding in analysis['findings']:
-                summary.append(f"- {finding}")
-            summary.append(f"Overall: {analysis['outcome']}")
+    # Handle missing values
+    X = X.fillna(X.mean())
     
-    return "\n".join(summary)
+    # Check if we have enough data
+    if len(X) < 10:  # Arbitrary minimum size
+        print("Warning: Very small dataset size may affect model reliability")
+    
+    # Scale the features
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    # Split the data
+    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, 
+                                                        test_size=0.2, 
+                                                        random_state=42)
+    
+    # Adjust parameter grid based on dataset size
+    param_grid = {
+        'n_estimators': [50, 100],
+        'max_depth': [None, 3],
+        'min_samples_split': [2],
+        'min_samples_leaf': [1]
+    }
+    
+    # Train model using GridSearchCV
+    rf = RandomForestClassifier(random_state=42)
+    grid_search = GridSearchCV(rf, param_grid, cv=min(5, len(X)), scoring='f1')
+    grid_search.fit(X_train, y_train)
+    
+    # Get best model
+    best_model = grid_search.best_estimator_
+    
+    # Make predictions
+    y_pred = best_model.predict(X_test)
+    
+    # Calculate feature importance
+    importance = pd.DataFrame({
+        'feature': features,
+        'importance': best_model.feature_importances_
+    }).sort_values('importance', ascending=False)
+    
+    return best_model, importance, X_test, y_test, y_pred
 
 # Main execution
 if __name__ == "__main__":
@@ -233,44 +217,50 @@ if __name__ == "__main__":
     print("Loading and processing data...")
     df = load_and_process_data('Transcribed_Data.csv')
     
-    # Analyze metrics (using previous analyze_uds_metrics function)
+    # Print initial data info for debugging
+    print("\nDataset Info:")
+    print(df.info())
+    
+    # Analyze metrics
     print("\nAnalyzing metrics...")
-    df, analysis_results = analyze_uds_metrics(df)  # Using the previous function
+    df, analysis_results = analyze_uds_metrics(df)
     
-    # Generate patient-specific analyses
-    patient_analyses = analyze_patient_outcomes(df)
+    # Print analysis results
+    print("\nAnalysis Results:")
+    for metric, results in analysis_results.items():
+        print(f"\n{metric}:")
+        print(f"Number of valid pairs: {results['n_samples']}")
+        print(f"Pre-treatment:  Mean = {results['mean_pre']:.2f} ± {results['std_pre']:.2f}")
+        print(f"Post-treatment: Mean = {results['mean_post']:.2f} ± {results['std_post']:.2f}")
+        print(f"Mean change: {results['mean_diff']:.2f} ({results['mean_pct_change']:.1f}%)")
+        print(f"P-value: {results['p_value']:.3f}")
     
-    # Create enhanced visualizations
-    print("\nGenerating visualizations...")
-    create_enhanced_visualizations(df, analysis_results)
+    # Create visualizations
+    print("\nCreating visualizations...")
+    create_visualizations(df, analysis_results)
     
-    # Generate and print clinical summary
-    print("\nCLINICAL SUMMARY")
-    print("=" * 50)
-    clinical_summary = generate_clinical_summary(df, analysis_results, patient_analyses)
-    print(clinical_summary)
-    
-    # Machine learning model (previous implementation remains if needed)
+    # Build and evaluate predictive model
     print("\nBuilding predictive model...")
-    model_results = build_predictive_model(df)  # Using the previous function
+    model_results = build_predictive_model(df)
     
     if all(result is not None for result in model_results):
         model, importance, X_test, y_test, y_pred = model_results
         
-        print("\nPREDICTIVE MODEL RESULTS")
-        print("=" * 50)
+        # Print model results
+        print("\nModel Evaluation:")
         print("\nClassification Report:")
         print(classification_report(y_test, y_pred))
         
         print("\nFeature Importance:")
         print(importance)
         
-        # Plot feature importance with improved formatting
+        # Plot feature importance
         plt.figure(figsize=(10, 6))
-        sns.barplot(data=importance, x='feature', y='importance')
+        importance.plot(x='feature', y='importance', kind='bar')
         plt.title('Feature Importance in Predicting Treatment Success')
-        plt.xlabel('Pre-treatment Metrics')
-        plt.ylabel('Relative Importance')
-        plt.xticks(rotation=45)
+        plt.xlabel('Features')
+        plt.ylabel('Importance')
         plt.tight_layout()
         plt.show()
+    else:
+        print("\nModel building failed due to data issues")
